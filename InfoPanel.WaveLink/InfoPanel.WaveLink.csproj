@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <Platforms>x64</Platforms>
+    <!-- Ensure all referenced assemblies are copied to the output directory -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <!-- Disable generation of deps.json -->
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <!-- Disable generation of runtimeconfig.json -->
+    <GenerateRuntimeConfigurationFiles>false</GenerateRuntimeConfigurationFiles>
+    <!-- Disable generation of PDB files in Release builds -->
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+    <!-- Limit satellite resources to English only -->
+    <SatelliteResourceLanguages>en-US</SatelliteResourceLanguages>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <AssemblyName>InfoPanel.WaveLink</AssemblyName>
+    <RootNamespace>InfoPanel.WaveLink</RootNamespace>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+
+  <!--
+    Reference the InfoPanel.Plugins API from Libs\ (same convention as
+    the InfoPanel.Spotify / InfoPanel.SteamAPI sibling repos).
+    Keep <Private>false</Private> so the DLL is NOT copied next to the plugin
+    (the InfoPanel host process provides it).
+  -->
+  <ItemGroup>
+    <Reference Include="InfoPanel.Plugins">
+      <HintPath>Libs\InfoPanel.Plugins.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="PluginInfo.ini">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
