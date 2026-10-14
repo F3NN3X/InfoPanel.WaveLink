@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Text;
 using System.Text.Json;
 using InfoPanel.Plugins;
 using InfoPanel.WaveLink.Services;
@@ -18,7 +20,13 @@ public class WaveLinkPlugin : BasePlugin
 
     private WaveLinkCollector? _collector;
     private WaveLinkState? _lastState;
-    private Dictionary<string, WlMeterLevels>? _lastMeters;
+
+    // Reused every tick so the 10 Hz meter publish allocates nothing unless the text changed.
+    private readonly object _meterGate = new();
+    private readonly List<WlMeterEntry> _entries = new();
+    private readonly Utf8JsonWriter _meterWriter = new(Stream.Null);
+    private ArrayBufferWriter<byte> _meterJson = new();
+    private ArrayBufferWriter<byte> _lastMeterJson = new();
 
     private PluginText? _status;
     private PluginText? _appVersion;
@@ -30,6 +38,9 @@ public class WaveLinkPlugin : BasePlugin
     {
     }
 
+    // Matches the host's ~100 ms forwarding cadence. Faster would not help: each Update
+    // publishes the peak since the previous one, so a 50 ms window the host then samples
+    // at 100 ms would drop every other window's peak.
     public override TimeSpan UpdateInterval => TimeSpan.FromMilliseconds(100);
 
     public override void Initialize()
@@ -41,7 +52,7 @@ public class WaveLinkPlugin : BasePlugin
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[WaveLink] Failed to start collector: {ex.Message}");
+            Console.WriteLine($"[WaveLink] Failed to start collector: {ex.Message}");
             _collector = null;
         }
     }
@@ -75,11 +86,15 @@ public class WaveLinkPlugin : BasePlugin
                 _state.Value = json;
         }
 
-        var meters = collector.Meters;
-        if (!ReferenceEquals(meters, _lastMeters))
+        lock (_meterGate)
         {
-            _lastMeters = meters;
-            _meters.Value = Serialize(meters);
+            collector.TakeMeters(_entries);
+            WriteMeters();
+            if (!_meterJson.WrittenSpan.SequenceEqual(_lastMeterJson.WrittenSpan))
+            {
+                _meters.Value = Encoding.UTF8.GetString(_meterJson.WrittenSpan);
+                (_meterJson, _lastMeterJson) = (_lastMeterJson, _meterJson);
+            }
         }
     }
 
@@ -91,8 +106,41 @@ public class WaveLinkPlugin : BasePlugin
 
     public override void Close()
     {
-        _collector?.Dispose();
+        // Detach first so a concurrent Update can't reach a disposed collector.
+        var collector = _collector;
         _collector = null;
+        collector?.Dispose();
+    }
+
+    /// <summary>
+    /// Writes `{ "device:{id}": {"left","right"}, ... }` into <see cref="_meterJson"/>,
+    /// values 0..100 rounded to 2 decimals so an unchanged level yields identical bytes.
+    /// dB values (null = silence) come precomputed with each entry.
+    /// </summary>
+    private void WriteMeters()
+    {
+        _meterJson.ResetWrittenCount();
+        _meterWriter.Reset(_meterJson);
+        _meterWriter.WriteStartObject();
+        foreach (var m in _entries)
+        {
+            _meterWriter.WriteStartObject(m.Key);
+            _meterWriter.WriteNumber("left"u8, Math.Round(m.Left, 2));
+            _meterWriter.WriteNumber("right"u8, Math.Round(m.Right, 2));
+            WriteDb("leftDb"u8, m.LeftDb);
+            WriteDb("rightDb"u8, m.RightDb);
+            _meterWriter.WriteEndObject();
+        }
+        _meterWriter.WriteEndObject();
+        _meterWriter.Flush();
+    }
+
+    private void WriteDb(ReadOnlySpan<byte> name, double? db)
+    {
+        if (db is { } v)
+            _meterWriter.WriteNumber(name, v);
+        else
+            _meterWriter.WriteNull(name);
     }
 
     private static string Serialize<T>(T value) => JsonSerializer.Serialize(value, JsonOpts);
